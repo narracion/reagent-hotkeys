@@ -85,7 +85,6 @@
   [handlers]
   (->> (for [[k f] handlers]
          [k (fn [event]
-              (.log js/console event)
               (println "[hotkeys]"
                        (.-code event) "->" (event->keycodes event))
               (f event))])
