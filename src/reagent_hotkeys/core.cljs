@@ -6,23 +6,37 @@
 
 ;; ## Register/Unregister
 
-(def ^:private as-event-type
+(def ^:private event-types
   {:key-up   EventType/KEYUP
    :key-down EventType/KEYDOWN})
 
-(defn- register-hotkey-handlers!
-  [handlers]
-  (doseq [[k handler] handlers
-          :let [t (as-event-type k)]
-          :when t]
-    (.addEventListener js/window t handler)))
+(defn- handler-from-atom
+  [handler-atom k]
+  (fn [evt]
+    (when-let [h (get @handler-atom k)]
+      (h evt))))
 
-(defn- unregister-hotkey-handlers!
-  [handlers]
-  (doseq [[k handler] handlers
-          :let [t (as-event-type k)]
-          :when t]
-    (.removeEventListener js/window t handler)))
+(defn- generate-window-handlers
+  [hotkey-handlers]
+  (->> (for [[k _] event-types
+             :let [h (handler-from-atom hotkey-handlers k)]
+             :when h]
+         [k h])
+       (into {})))
+
+(defn- register-window-handlers!
+  [window-handlers]
+  (doseq [[k t] event-types
+          :let [h (get window-handlers k)]
+          :when h]
+    (.addEventListener js/window t h)))
+
+(defn- unregister-window-handlers!
+  [window-handlers]
+  (doseq [[k t] event-types
+          :let [h (get window-handlers k)]
+          :when h]
+    (.removeEventListener js/window t h)))
 
 ;; ## Keys
 
@@ -102,16 +116,22 @@
 
 ;; ## Component
 
+(defn- generate-state
+  [props]
+  ;; We're using an atom to store the hotkey handlers. This allows us to replace
+  ;; them dynamically when the props are updated, without having to unregister
+  ;; and re-register the window handlers.
+  (let [handlers        (atom (generate-hotkey-handlers props))
+        window-handlers (generate-window-handlers handlers)]
+    {:on-mount        #(register-window-handlers! window-handlers)
+     :on-unmount      #(unregister-window-handlers! window-handlers)
+     :on-update       #(reset! handlers (generate-hotkey-handlers %))}))
+
 (defn hotkeys
   [props]
-  (let [handlers (generate-hotkey-handlers props)]
+  (let [{:keys [on-mount on-unmount on-update]} (generate-state props)]
     (r/create-class
-      {:component-did-mount
-       (fn [_]
-         (register-hotkey-handlers! handlers))
-       :component-will-unmount
-       (fn [_]
-         (unregister-hotkey-handlers! handlers))
-       :reagent-render
-       (fn [_]
-         [:span])})))
+      {:component-did-mount    on-mount
+       :component-will-unmount on-unmount
+       :component-did-update   (comp on-update second r/argv)
+       :reagent-render         (constantly [:span])})))
